@@ -102,6 +102,7 @@ public class PlannerAgent extends Agent {
     	openList.offer(startState);
     	
     	// Perform search loop
+    	int count = 0;
     	GameState nextState = null;
     	while (!openList.isEmpty()) {
     		nextState = openList.poll();
@@ -114,10 +115,11 @@ public class PlannerAgent extends Agent {
     		else {	// Add its kids to the open and count it as visited
     			openList.addAll(nextState.generateChildren());
     			visited.add(nextState);
+    			count++;
     		}
     	}
     	
-    	// No path was found, quit.
+    	// No path is possible, quit.
     	System.out.println("No available plan");
     	System.exit(0);
     	return new Stack<StripsAction>();

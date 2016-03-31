@@ -34,9 +34,10 @@ import java.util.Stack;
 public class GameState implements Comparable<GameState> {
 	
 	public enum Resource { WOOD, GOLD, NONE }	// Types of resources the peasant can be holding
-	private Map<String, Object[]> goldSources;	// A map of all gold resource positions, keyed by their coordinates
-	private Map<String, Object[]> woodSources;	// A map of all wood resource positions, keyed by their coordinates
-	private Resource holdType;					// The type of resource the peasant is currently holding
+	private Map<String, Object[]> goldSources;	// A map of gold resource info, keyed by their coordinates
+	private Map<String, Object[]> woodSources;	// A map of wood resource info, keyed by their coordinates
+	private Map<Integer, Object[]> peasants;	// A map of peasant unit info, keyed by their IDs
+	//private Resource holdType;					// The type of resource the peasant is currently holding
 
 	private double cost;						// The cost of the plan thus far;
 	private GameState parentState;				// The predecessor state before the last action
@@ -44,8 +45,12 @@ public class GameState implements Comparable<GameState> {
 	private List<StripsAction> lastActions;		// The actions taken to result in this state
 	
 	private Position townHallPosition;			// The position of the town hall unit
-	private Position peasantPosition;			// The position of the peasant unit
-	private int peasantID;						// The id of the peasant unit
+	//private Position peasantPosition;			// The position of the peasant unit
+	//private int peasantID;						// The id of the peasant unit
+	private int townHallID;						// The id of the town hall
+	private int currentFood;					// The count of food available
+	
+	private boolean buildPeasant;				// The build peasant condition
 	
 	private int xExtent;						// The horizontal extent of the map
 	private int yExtent;						// The vertical extent of the map
@@ -53,10 +58,12 @@ public class GameState implements Comparable<GameState> {
 	private int requiredWood;					// The required amount of wood
 	private int currentGold;					// The current total of gold
 	private int currentWood;					// The current total of wood
-	private int holdingCount;					// The amount the peasant is holding
+	//private int holdingCount;					// The amount the peasant is holding
 
+	private static final int ID_INDEX = 0;
 	private static final int POS_INDEX = 1;
 	private static final int AMT_INDEX = 2;
+	private static final int TYPE_INDEX = 3;
 	
     /**
      * Construct a GameState from a stateview object. This is used to construct the initial search node. All other
@@ -70,6 +77,9 @@ public class GameState implements Comparable<GameState> {
      */
     public GameState(State.StateView state, int playernum, int requiredGold, int requiredWood, boolean buildPeasants) {
     	
+    	// Copy build peasants
+    	this.buildPeasant = buildPeasants;
+    	
     	// Empty parent state
     	this.parentState = null;
     	this.cost = 0;
@@ -81,6 +91,8 @@ public class GameState implements Comparable<GameState> {
     	for (int i = 0; i < resourceViews.size(); i++) {
     		ResourceView resource = resourceViews.get(i);
 			Position position = new Position(resource.getXPosition(), resource.getYPosition());
+			
+			// Determine if the resource is gold or wood
     		if (resource.getType() == Type.GOLD_MINE) {
     			Object[] resourceInfo = {resource.getID(), position, resource.getAmountRemaining()};
     			goldSources.put(position.keyString(), resourceInfo);
@@ -92,24 +104,29 @@ public class GameState implements Comparable<GameState> {
     	}
     	
     	// The peasant initially is empty-handed
-    	this.holdType = Resource.NONE;
-    	this.holdingCount = 0;
+    	//this.holdType = Resource.NONE;
+    	//this.holdingCount = 0;
     	
     	// The plan is initially empty
     	this.actionList = new ArrayList<StripsAction>();
     	this.lastActions = new ArrayList<StripsAction>();
     	
-    	// Get the initial position of the town hall and the peasant
+    	// Get info about the units in the world
+    	peasants = new HashMap<Integer, Object[]>();
     	List<UnitView> units = state.getUnits(playernum);
     	for (UnitView unit : units) {
     		Position position = new Position(unit.getXPosition(), unit.getYPosition());
     		if (unit.getTemplateView().getName().equals("Peasant")) {
-    			// Add an entry into the peasant info array about the initial peasant
-    	    	this.peasantPosition = position;
-    	    	this.peasantID = unit.getID();
+    			// Assemble peasant info array
+    	    	//this.peasantID = unit.getID();
+    	    	//this.peasantPosition = position;
+    	    	Object[] info = new Object[]{ unit.getID(), position, 0, Resource.NONE };
+    	    	peasants.put(unit.getID(), info);
     		}
-    		else {
+    		else {	// This unit is the town hall
     			this.townHallPosition = position;
+    			this.townHallID = unit.getID();
+    			this.currentFood = unit.getTemplateView().getFoodProvided() - 1;
     		}
     	}
     	
@@ -129,18 +146,41 @@ public class GameState implements Comparable<GameState> {
     	this.parentState = state;
     	
     	// Copy state resulting from action
-    	this.holdType = parentState.holdType;
-    	this.holdingCount = parentState.holdingCount;
+    	//this.holdType = parentState.holdType;
+    	//this.holdingCount = parentState.holdingCount;
     	this.goldSources = new HashMap<String, Object[]>(parentState.goldSources);
     	this.woodSources = new HashMap<String, Object[]>(parentState.woodSources);
+    	this.peasants = new HashMap<Integer, Object[]>();
+    	
+    	// Copy values from peasant info arrays to avoid lingering references
+    	for (Object[] parent : parentState.peasants.values()) {
+    		// Get id
+    		int id = (Integer)parent[ID_INDEX];
+    		
+    		// Get position
+    		Position pos = (Position)parent[POS_INDEX];
+    		pos = new Position(pos.x, pos.y);
+    		
+    		// Get holding count and type
+    		int holdingCount = (Integer)parent[AMT_INDEX];
+    		Resource holdType = (Resource)parent[TYPE_INDEX];
+    		
+    		// Assemble and store
+    		Object[] peasant = new Object[] { id, pos, holdingCount, holdType };
+    		this.peasants.put(id, peasant);
+    	}
+    	
     	this.xExtent = parentState.getXExtent();
     	this.yExtent = parentState.getYExtent();
     	this.requiredGold = parentState.requiredGold;
     	this.requiredWood = parentState.requiredWood;
     	this.currentGold = parentState.currentGold;
     	this.currentWood = parentState.currentWood;
-    	this.peasantID = parentState.peasantID;
-    	this.peasantPosition = new Position(parentState.peasantPosition.x, parentState.peasantPosition.y);
+    	this.currentFood = parentState.currentFood;
+    	
+    	//this.peasantID = parentState.peasantID;
+    	this.townHallID = parentState.townHallID;
+    	//this.peasantPosition = new Position(parentState.peasantPosition.x, parentState.peasantPosition.y);
     	this.townHallPosition = new Position(parentState.townHallPosition.x, parentState.townHallPosition.y);
     	
     	// Plan/cost is previous state + last actions
@@ -150,7 +190,7 @@ public class GameState implements Comparable<GameState> {
     	for (int i = 0; i < lastActions.size(); i++) {
         	this.cost += lastActions.get(i).getCost(parentState);
         	this.actionList.add(lastActions.get(i));
-        	this.actionList.get(i).apply(this);
+        	this.lastActions.get(i).apply(this);
     	}
     }
     
@@ -159,26 +199,42 @@ public class GameState implements Comparable<GameState> {
     }
     
     public String getResourceLevels() {
+    	Object[] peasant = peasants.get(1);
     	return "Wood: " + (currentWood) + 
     			" Gold: " + (currentGold) + 
-    			" Holding: " + holdingCount;
+    			" Holding: " + peasant[AMT_INDEX];//holdingCount;
     }
     
     public Position getTownHallPosition() {
     	return townHallPosition;
     }
-    
-    public Position getPeasantPosition() {
-    	return peasantPosition;
+
+    public int getTownHallID() {
+    	return townHallID;
     }
     
-    public void setPeasantPosition(Position newPosition) {
-    	peasantPosition = newPosition;
+    public Position getPeasantPosition(int id) {
+    	Object[] peasant = peasants.get(id);
+    	return (Position)peasant[POS_INDEX];
     }
     
-    public int getPeasantID() {
-    	return peasantID;
+//    public Position getPeasantPosition() {
+//    	return peasantPosition;
+//    }
+    
+    public void setPeasantPosition(int id, Position newPosition) {
+    	Object[] peasant = peasants.remove(id);
+    	peasant[POS_INDEX] = newPosition;
+    	peasants.put(id, peasant);
     }
+    
+//    public void setPeasantPosition(Position newPosition) {
+//    	peasantPosition = newPosition;
+//    }
+    
+//    public int getPeasantID() {
+//    	return peasantID;
+//    }
     
     public int getXExtent() {
     	return xExtent;
@@ -190,6 +246,10 @@ public class GameState implements Comparable<GameState> {
     
     public int getCurrentGold() {
     	return currentGold;
+    }
+    
+    public int getCurrentFood() {
+    	return currentFood;
     }
     
     
@@ -226,72 +286,89 @@ public class GameState implements Comparable<GameState> {
      */
     public List<GameState> generateChildren() {
     	List<GameState> children = new ArrayList<>();
-		List<StripsAction> actions = new ArrayList<>();
-		
-    	// if (peasants.size == 1) 
-    	if (currentGold < requiredGold) {
-	    	// Add move actions to gold mines the peasant is not adjacent to already
-	    	for (Object[] goldMine : goldSources.values()) {
-    			Position minePosition = (Position)goldMine[POS_INDEX];
-	    		if ((Integer)goldMine[AMT_INDEX] > 0) {
-	    			StripsAction moveToMine = ActionFactory.makeMoveAction(minePosition, getPeasantID());
-	    			if (moveToMine.preconditionsMet(this)) {
-	    				actions.add(moveToMine);
-	    				//GameState nearMine = new GameState(this, moveToMine);
-	    				//children.add(nearMine);
-	    			}
-	    		}
-	    	}
+    	List<List<StripsAction>> peasantActions = new ArrayList<>();
 
-	    	// Add HarvestGold action if available
-	    	StripsAction harvestGold = ActionFactory.makeHarvestAction(Resource.GOLD);
-	    	if (harvestGold.preconditionsMet(this)) {
-	    		GameState harvestGoldState = new GameState(this, harvestGold);
-	    		children.add(harvestGoldState);
-	    	}
-    	}
+    	for (Object[] peasant : peasants.values()) {
+
+    		int peasantID = (Integer)peasant[ID_INDEX];
+    		List<StripsAction> actions = new ArrayList<>();
+    		
+    		if (!isPeasantHolding(peasantID)) {
+		    	if (currentGold < requiredGold) {
+			    	// Add move actions to gold mines the peasant is not adjacent to already
+			    	for (Object[] goldMine : goldSources.values()) {
+		    			Position minePosition = (Position)goldMine[POS_INDEX];
+			    		if ((Integer)goldMine[AMT_INDEX] > 0) {
+			    			StripsAction moveToMine = ActionFactory.makeMoveAction(peasantID, minePosition);
+			    			if (moveToMine.preconditionsMet(this)) {
+			    				actions.add(moveToMine);
+			    			}
+			    		}
+			    	}
 		
-    	if (currentWood < requiredWood) {
-	    	// Add move actions to trees the peasant is not adjacent to already
-	    	for (Object[] tree : woodSources.values()) {
-	    		if ((Integer)tree[AMT_INDEX] > 0) {
-		    		Position treePosition = (Position)tree[POS_INDEX];
-		    		StripsAction moveToTree = ActionFactory.makeMoveAction(treePosition, getPeasantID());
-		    		if (moveToTree.preconditionsMet(this)) {
-		    			GameState nearTree = new GameState(this, moveToTree);
-		    			children.add(nearTree);
-		    		}
-	    		}
-	    	}
-	    	
-	    	// Add HarvestWood action if available
-	    	StripsAction harvestWood = ActionFactory.makeHarvestAction(Resource.WOOD);
-	    	if (harvestWood.preconditionsMet(this)) {
-	    		GameState harvestWoodState = new GameState(this, harvestWood);
-	    		children.add(harvestWoodState);
-	    	}
+			    	// Add HarvestGold action if available
+			    	StripsAction harvestGold = ActionFactory.makeHarvestAction(peasantID, Resource.GOLD);
+			    	if (harvestGold.preconditionsMet(this)) {
+			    		actions.add(harvestGold);
+			    	}
+		    	}
+				
+		    	if (currentWood < requiredWood) {
+			    	// Add move actions to trees the peasant is not adjacent to already
+			    	for (Object[] tree : woodSources.values()) {
+			    		if ((Integer)tree[AMT_INDEX] > 0) {
+				    		Position treePosition = (Position)tree[POS_INDEX];
+				    		StripsAction moveToTree = ActionFactory.makeMoveAction(peasantID, treePosition);
+				    		if (moveToTree.preconditionsMet(this)) {
+				    			actions.add(moveToTree);
+				    		}
+			    		}
+			    	}
+			    	
+			    	// Add HarvestWood action if available
+			    	StripsAction harvestWood = ActionFactory.makeHarvestAction(peasantID, Resource.WOOD);
+			    	if (harvestWood.preconditionsMet(this)) {
+			    		actions.add(harvestWood);
+			    	}
+		    	}
+    		}
+    		else {	// peasant is holding
+		    	// Add a move action to the town hall if available
+		    	StripsAction moveToTownHall = ActionFactory.makeMoveAction(peasantID, townHallPosition);
+		    	if (moveToTownHall.preconditionsMet(this)) {
+		    		actions.add(moveToTownHall);
+		    	}
+		    	
+		    	// Add Deposit action if available
+		    	StripsAction deposit = ActionFactory.makeDepositAction(peasantID);
+		    	if (deposit.preconditionsMet(this)) {
+		    		actions.add(deposit);
+		    	}	
+    		}
+    		
+	    	peasantActions.add(actions);
     	}
-		
-    	// Add a move action to the town hall if available
-    	StripsAction moveToTownHall = ActionFactory.makeMoveAction(townHallPosition, getPeasantID());
-    	if (moveToTownHall.preconditionsMet(this)) {
-    		GameState nearTownHall = new GameState(this, moveToTownHall);
-    		children.add(nearTownHall);
-    	}
-    	
-    	// Add Deposit action if available
-    	StripsAction deposit = ActionFactory.makeDepositAction();
-    	if (deposit.preconditionsMet(this)) {
-    		GameState depositState = new GameState(this, deposit);
-    		children.add(depositState);
-    	}
-    	
-    	
+
+    	List<StripsAction> stateActions = null;
+		List<StripsAction> actions = peasantActions.get(0);
     	for (int i = 0; i < actions.size(); i++) {
+    		stateActions = new ArrayList<StripsAction>();
+    		
+    		// Add action and make state
+    		stateActions.add(actions.get(i));
+    		GameState noBuild = new GameState(this, stateActions);
+    		children.add(noBuild);
+    		
+    		// Consider build option
     		StripsAction build = ActionFactory.makeBuildAction();
-    		GameState noBuild = new GameState(this, actions.get(0));
-    		GameState withBuild = new GameState(this, actions.get(0));
+    		if (buildPeasant && build.preconditionsMet(this)) {
+    			stateActions = new ArrayList<StripsAction>(stateActions);
+    			stateActions.add(build);
+    			GameState withBuild = new GameState(this, stateActions);
+    			children.add(withBuild);
+    		}
     	}
+    	
   
         return children;
     }
@@ -308,24 +385,35 @@ public class GameState implements Comparable<GameState> {
     	// The priority 
     	double heuristic = 0.0;
     	
-    	// If not holding
-    	if (holdType == Resource.NONE) {
-    		// - proximity to nearest and lowest resource is good
-    		if (currentGold > currentWood) {
-    			heuristic += nearestTreeToPeasant().euclideanDistance(getPeasantPosition());
-    		}
-    		else {
-    			heuristic += nearestMineToPeasant().euclideanDistance(getPeasantPosition());
-    		}
-
-    	}
-    	else { // If holding, minimize distance to town hall
-    		heuristic += getPeasantPosition().euclideanDistance(townHallPosition);
-    	}
+    	// TODO: BUILD PEASANT?
     	
+    	// If not holding
+    	for (Object[] peasant : peasants.values()) {
+    		int id = (Integer)peasant[ID_INDEX];
+    		Position position = (Position)peasant[POS_INDEX];
+    		Resource holdType = (Resource)peasant[TYPE_INDEX];
+    		int holdingCount = (Integer)peasant[AMT_INDEX];
+	    	if (holdType == Resource.NONE) {
+	    		// - proximity to nearest and lowest resource is good
+	    		if (currentGold < currentWood) {
+	    			heuristic += nearestMineToPosition(position).euclideanDistance(position);
+	    		}
+	    		else {
+	    			heuristic += nearestTreeToPosition(position).euclideanDistance(position);
+	    		}
+	    	}
+	    	else { // If holding, minimize distance to town hall
+	    		if (parentState.parentState.isPeasantHolding(id)) {
+	    			heuristic += 100;
+	    		}
+	    		heuristic += position.euclideanDistance(townHallPosition);
+	    	}
+	    	
+	    	heuristic -= holdingCount/10;
+    	}
+
     	heuristic += requiredGold - currentGold;
     	heuristic += requiredWood - currentWood;
-    	heuristic -= holdingCount/10;
     	
         return heuristic;
     }
@@ -406,12 +494,12 @@ public class GameState implements Comparable<GameState> {
     	return null;
     }
     
-    public Position nearestMineToPeasant() {
+    public Position nearestMineToPosition(Position position) {
     	Position nearestMine = null;
     	double minDist = Double.MAX_VALUE;
     	for (Object[] goldMine : goldSources.values()) {
     		Position minePosition = (Position)goldMine[POS_INDEX];
-    		double dist = minePosition.euclideanDistance(getPeasantPosition());
+    		double dist = minePosition.euclideanDistance(position);
     		if (dist < minDist) {
     			minDist = dist;
     			nearestMine = minePosition;
@@ -420,12 +508,12 @@ public class GameState implements Comparable<GameState> {
     	return nearestMine;
     }
     
-    public Position nearestTreeToPeasant() {
+    public Position nearestTreeToPosition(Position position) {
     	Position nearestTree = null;
     	double minDist = Double.MAX_VALUE;
     	for (Object[] tree : woodSources.values()) {
     		Position treePosition = (Position)tree[POS_INDEX];
-    		double dist = treePosition.euclideanDistance(getPeasantPosition());
+    		double dist = treePosition.euclideanDistance(position);
     		if (dist < minDist) {
     			minDist = dist;
     			nearestTree = treePosition;
@@ -446,22 +534,41 @@ public class GameState implements Comparable<GameState> {
     	return true;
     }
     
-    public boolean isPeasantHolding() {
+    public boolean isPeasantHolding(int id) {
+    	Object[] peasant = peasants.get(id);
+    	Resource holdType = (Resource)peasant[TYPE_INDEX];
     	return holdType != Resource.NONE;
     }
     
-    public void depositResource() {
+    public void depositResource(int id) {
+    	System.out.println("DEPOSIT\n - pre");
+    	System.out.println(getResourceLevels());
+    	// Get depositing peasant info
+    	Object[] peasant = peasants.remove(id);
+    	Resource holdType = (Resource)peasant[TYPE_INDEX];
+    	int holdingCount = (Integer)peasant[AMT_INDEX];
+    	
+    	// Make deposit
     	if (holdType == Resource.GOLD) {
-    		currentGold += 100;
+    		currentGold += holdingCount;
     	}
     	else if (holdType == Resource.WOOD){
-    		currentWood += 100;
+    		currentWood += holdingCount;
     	}
-    	holdType = Resource.NONE;
-    	holdingCount = 0;
+    	
+    	// Change peasant info
+    	peasant[AMT_INDEX] = 0;
+    	peasant[TYPE_INDEX] = Resource.NONE;
+    	
+    	// Save edited peasant info
+    	peasants.put(id, peasant);
+    	System.out.println(getResourceLevels());
     }
     
-    public void harvestResource(String key, Resource type) {
+    public void harvestResource(int id, String key, Resource type) {
+    	Object[] peasant = peasants.remove(id);
+    	int holdingCount = 0;
+    	
     	if (type == Resource.GOLD) {
     		Object[] goldMine = goldSources.remove(key);
     		int goldCount = (Integer)goldMine[AMT_INDEX];
@@ -490,15 +597,21 @@ public class GameState implements Comparable<GameState> {
     		tree[AMT_INDEX] = woodCount;
     		woodSources.put(key, tree);
     	}
-    	holdType = type;
+    	
+    	// Edit peasant info
+    	peasant[AMT_INDEX] = holdingCount;
+    	peasant[TYPE_INDEX] = type;
+    	
+    	// Save edited peasant info
+    	peasants.put(id, peasant);
     }
     
     public void buildPeasant() {
     	currentGold -= 400;
+    	currentFood -= 1;
     	
-    	//currentFood -= 1;
+    	// build peasant info [] and add it
     	
     	System.out.println("BUILT PEASANT");
-    	
     }
 }

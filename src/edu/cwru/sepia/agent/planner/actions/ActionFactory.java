@@ -11,18 +11,18 @@ public class ActionFactory {
 	 * @param dir The direction the move is in
 	 * @return A MoveAction object in the given direction
 	 */
-	public static StripsAction makeMoveAction(Position pos, int unitid) {
+	public static StripsAction makeMoveAction(int unitID, Position pos) {
 		ActionFactory factory = new ActionFactory();
-		return factory.new MoveAction(pos, unitid);
+		return factory.new MoveAction(pos, unitID);
 	}
 	
 	/**
 	 * Creates a deposit action of any resource type
 	 * @return A DepositAction object for any resource type
 	 */
-	public static StripsAction makeDepositAction() {
+	public static StripsAction makeDepositAction(int unitID) {
 		ActionFactory factory = new ActionFactory();
-		return factory.new DepositAction();
+		return factory.new DepositAction(unitID);
 	}
 	
 	/**
@@ -30,9 +30,9 @@ public class ActionFactory {
 	 * @param type The type of resource 
 	 * @return A HarvestAction object for the given resource type
 	 */
-	public static StripsAction makeHarvestAction(GameState.Resource type) {
+	public static StripsAction makeHarvestAction(int unitID, GameState.Resource type) {
 		ActionFactory factory = new ActionFactory();
-		return factory.new HarvestAction(type);
+		return factory.new HarvestAction(unitID, type);
 	}
 	
 	public static StripsAction makeBuildAction() {
@@ -71,7 +71,7 @@ public class ActionFactory {
 		@Override
 		public GameState apply(GameState state) {
 			// Set new peasant location
-			state.setPeasantPosition(position);
+			state.setPeasantPosition(unitID, position);
 			return state;
 		}
 		
@@ -85,7 +85,7 @@ public class ActionFactory {
 			
 			// Since moves are between distinct positions, moves to a destination
 			// that the peasant is already adjacent to are not allowed.
-			if (pos.isAdjacent(state.getPeasantPosition())) { 
+			if (pos.isAdjacent(state.getPeasantPosition(unitID))) { 
 				return false; 
 			}
 			
@@ -93,7 +93,7 @@ public class ActionFactory {
 			// set the destination to be the nearest position adjacent to it.
 			if (state.isResourceAtPosition(pos) || 
 					pos.equals(state.getTownHallPosition())) {
-				position = pos.getNearestAdjacentPosition(state.getPeasantPosition());
+				position = pos.getNearestAdjacentPosition(state.getPeasantPosition(unitID));
 			}
 			return true;
 		}
@@ -101,7 +101,7 @@ public class ActionFactory {
 		@Override
 		public double getCost(GameState state) {
 			// Estimated to be the distance between the desired position and the peasant
-			return state.getPeasantPosition().chebyshevDistance(position);
+			return state.getPeasantPosition(unitID).chebyshevDistance(position);
 		}
 		
 		@Override
@@ -118,6 +118,10 @@ public class ActionFactory {
 		private int unitID;
 		private Direction direction;
 		
+		public DepositAction(int unitID){
+			this.unitID = unitID;
+		}
+		
 		public int getUnitID() {
 			return unitID;
 		}
@@ -128,14 +132,13 @@ public class ActionFactory {
 		
 		@Override
 		public boolean preconditionsMet(GameState state) {
-			unitID = state.getPeasantID();
 			
 			// Peasant must be holding a resource and adjacent to the town hall
-			Position peasant = state.getPeasantPosition();
+			Position peasant = state.getPeasantPosition(unitID);
 			boolean nextToTownHall = peasant.isAdjacent(state.getTownHallPosition());
 			if (nextToTownHall) {
 				direction = peasant.getDirection(state.getTownHallPosition());
-				return state.isPeasantHolding();
+				return state.isPeasantHolding(unitID);
 			}
 			return false;
 		}
@@ -143,7 +146,7 @@ public class ActionFactory {
 		@Override
 		public GameState apply(GameState state) {
 			// Sets peasant to empty handed and adds to totals
-			state.depositResource();
+			state.depositResource(unitID);
 			return state;
 		}
 
@@ -167,7 +170,8 @@ public class ActionFactory {
 		private Direction direction;
 		private GameState.Resource type;
 		
-		public HarvestAction(GameState.Resource type) {
+		public HarvestAction(int id, GameState.Resource type) {
+			this.unitID = id;
 			this.type = type;
 		}
 		
@@ -181,23 +185,24 @@ public class ActionFactory {
 		
 		@Override
 		public boolean preconditionsMet(GameState state) {
-			unitID = state.getPeasantID();
 			// Peasant must be empty handed
-			if (state.isPeasantHolding()) { return false; }
+			if (state.isPeasantHolding(unitID)) { return false; }
+			
 			// Must be next to non-empty resource of given type
+			Position peasant = state.getPeasantPosition(unitID);
 			Position resource = null;
 			if (type == GameState.Resource.GOLD) {
-				resource = state.goldMineNextToPosition(state.getPeasantPosition());
+				resource = state.goldMineNextToPosition(peasant);
 				if (resource != null) {
-					direction = state.getPeasantPosition().getDirection(resource);
+					direction = peasant.getDirection(resource);
 					resourceKey = resource.keyString();
 					return state.isResourceEmpty(type, resourceKey);
 				}
 			}
 			else if (type == GameState.Resource.WOOD) {
-				resource = state.treeNextToPosition(state.getPeasantPosition());
+				resource = state.treeNextToPosition(peasant);
 				if (resource != null) {
-					direction = state.getPeasantPosition().getDirection(resource);
+					direction = peasant.getDirection(resource);
 					resourceKey = resource.keyString();
 					return state.isResourceEmpty(type, resourceKey);
 				}
@@ -208,7 +213,7 @@ public class ActionFactory {
 		@Override
 		public GameState apply(GameState state) {
 			// Sets peasant to holding 100 or less, removes from resource count
-			state.harvestResource(resourceKey, type);
+			state.harvestResource(unitID, resourceKey, type);
 			return state;
 		}
 
@@ -232,23 +237,17 @@ public class ActionFactory {
 		@Override
 		public boolean preconditionsMet(GameState state) {
 			boolean met = false;
-			
-			// enough dough
+			// Must have sufficient gold and food;
 			met = state.getCurrentGold() >= 400;
-			
-			// enough food
-			// met = met && state.getFood > 0
-			// townHallID = state.getTownHallID();
-			
+			met = met && state.getCurrentFood() > 0;
+			townHallID = state.getTownHallID();
 			return met;
 		}
 
 		@Override
 		public GameState apply(GameState state) {
-			
 			// Build peasant
 			state.buildPeasant();
-			
 			return state;
 		}
 
